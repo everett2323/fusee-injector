@@ -112,6 +112,54 @@
             font-weight: 600;
         }
 
+        /* Payload Selector Styles */
+        .payload-selector {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .selector-option {
+            flex: 1;
+            position: relative;
+        }
+
+        .selector-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .selector-label {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+
+        .selector-label .icon {
+            font-size: 1.25rem;
+            margin-bottom: 6px;
+        }
+
+        .selector-option input[type="radio"]:checked + .selector-label {
+            border-color: var(--accent-blue);
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--text-main);
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+        }
+
         .file-zone {
             border: 2px dashed var(--border-color);
             border-radius: 16px;
@@ -204,7 +252,6 @@
             white-space: pre-wrap;
         }
 
-        /* Custom Scrollbar */
         .console-log::-webkit-scrollbar {
             width: 6px;
         }
@@ -232,32 +279,52 @@
             </div>
         </div>
 
-        <div class="file-zone">
-            <div class="file-zone-icon">📁</div>
+        <div class="payload-selector">
+            <div class="selector-option">
+                <input type="radio" id="typeHekate" name="payloadType" value="hekate" checked>
+                <label for="typeHekate" class="selector-label">
+                    <span class="icon">🔥</span>
+                    <span>Hekate</span>
+                </label>
+            </div>
+            <div class="selector-option">
+                <input type="radio" id="typeCustom" name="payloadType" value="custom">
+                <label for="typeCustom" class="selector-label">
+                    <span class="icon">📁</span>
+                    <span>Custom Payload</span>
+                </label>
+            </div>
+        </div>
+
+        <div id="fileZone" class="file-zone" style="display: none;">
+            <div class="file-zone-icon">📋</div>
             <div id="fileZoneText" class="file-zone-text"><span>Click to browse</span> or drag `.bin` payload here</div>
             <input type="file" id="payloadFile" accept=".bin">
         </div>
 
         <button id="actionBtn" class="btn">Connect Device</button>
 
-        <div id="logger" class="console-log">[System] Ready. Please select a custom payload...</div>
+        <div id="logger" class="console-log">[System] Ready. Hekate profile selected automatically.</div>
     </div>
 
     <script>
-        // Nintendo Switch APX USB IDs
         const RCM_VENDOR_ID = 0x057E; 
         const RCM_PRODUCT_ID = 0x3000;
 
         let usbDevice = null;
         let payloadArrayBuffer = null;
+        let builtInPayloadCache = {};
 
         const el = {
             statusDot: document.getElementById('statusDot'),
             statusLabel: document.getElementById('statusLabel'),
+            fileZone: document.getElementById('fileZone'),
             fileZoneText: document.getElementById('fileZoneText'),
             payloadInput: document.getElementById('payloadFile'),
             actionBtn: document.getElementById('actionBtn'),
-            logger: document.getElementById('logger')
+            logger: document.getElementById('logger'),
+            radioHekate: document.getElementById('typeHekate'),
+            radioCustom: document.getElementById('typeCustom')
         };
 
         function log(text) {
@@ -265,7 +332,44 @@
             el.logger.scrollTop = el.logger.scrollHeight;
         }
 
-        // Handle File Selection
+        // Fetch local server payloads (like hekate.bin) directly into ArrayBuffers
+        async function fetchBuiltInPayload(filename) {
+            if (builtInPayloadCache[filename]) {
+                return builtInPayloadCache[filename];
+            }
+            try {
+                log(`Fetching ${filename} from server configuration...`);
+                const response = await fetch(filename);
+                if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+                const buffer = await response.arrayBuffer();
+                builtInPayloadCache[filename] = buffer;
+                log(`Successfully matched and downloaded structural bytes for ${filename}`);
+                return buffer;
+            } catch (err) {
+                log(`Failed to fetch ${filename}: ${err.message}. Ensure the file exists in the correct folder.`);
+                return null;
+            }
+        }
+
+        // Toggle visibility between options
+        function handlePayloadTypeChange() {
+            if (el.radioHekate.checked) {
+                el.fileZone.style.display = 'none';
+                payloadArrayBuffer = null; // Will draw from server on click
+                log("Target profile shifted to: Hekate");
+            } else {
+                el.fileZone.style.display = 'block';
+                el.fileZoneText.innerHTML = `<span>Click to browse</span> or drag `.bin` payload here`;
+                payloadArrayBuffer = null;
+                log("Target profile shifted to: Custom Upload");
+            }
+            updateUIState();
+        }
+
+        el.radioHekate.addEventListener('change', handlePayloadTypeChange);
+        el.radioCustom.addEventListener('change', handlePayloadTypeChange);
+
+        // Handle File Selection (Custom Profiles)
         el.payloadInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -281,6 +385,8 @@
         });
 
         function updateUIState() {
+            const isHekateMode = el.radioHekate.checked;
+
             if (!usbDevice) {
                 el.statusDot.className = 'status-dot';
                 el.statusLabel.innerText = 'Disconnected';
@@ -290,8 +396,8 @@
                 el.statusDot.className = 'status-dot connected';
                 el.statusLabel.innerText = 'Switch (RCM) Detected';
                 
-                if (payloadArrayBuffer) {
-                    el.actionBtn.innerText = 'Inject Payload';
+                if (isHekateMode || payloadArrayBuffer) {
+                    el.actionBtn.innerText = isHekateMode ? 'Inject Hekate' : 'Inject Payload';
                     el.actionBtn.disabled = false;
                 } else {
                     el.actionBtn.innerText = 'Select Payload to Inject';
@@ -312,8 +418,19 @@
                 } catch (err) {
                     log("Connection failed: " + err.message);
                 }
-            } else if (payloadArrayBuffer) {
-                injectPayload();
+            } else {
+                // If it's in hekate mode, dynamically grab it from the root directory before running routine
+                if (el.radioHekate.checked) {
+                    const dynamicBuffer = await fetchBuiltInPayload('hekate.bin');
+                    if (dynamicBuffer) {
+                        payloadArrayBuffer = dynamicBuffer;
+                        injectPayload();
+                    } else {
+                        log("Injection aborted: Missing hekate.bin on host environment root.");
+                    }
+                } else if (payloadArrayBuffer) {
+                    injectPayload();
+                }
             }
         });
 
@@ -333,59 +450,14 @@
                 await usbDevice.claimInterface(0);
 
                 log("Reading device hardware info...");
-                // Standard RCM queries send 16 bytes containing chip ID
                 let result = await usbDevice.transferIn(1, 16);
                 log("Connected to hardware revision: " + new Uint8Array(result.data.buffer).subarray(0,4).join('.'));
 
                 // Construct interleave payload geometry 
-                // Interleave size targets standard Tegra X1 bootROM buffer exploit sizing
                 let payload = new Uint8Array(0x30000); 
                 let sourceView = new Uint8Array(payloadArrayBuffer);
                 
-                // Copy the actual payload to the front of the exploit construction zone
                 payload.set(sourceView, 0);
 
                 log("Interleaving geometry mapping...");
-                // Setting up structural overlapping layout to smash the stack reliably
-                for (let i = 0x3C00; i < 0x4000; i += 4) {
-                    payload[i]     = 0x00;
-                    payload[i + 1] = 0xE0;
-                    payload[i + 2] = 0x01;
-                    payload[i + 3] = 0x40;
-                }
-
-                log("Sending payload payload block...");
-                await usbDevice.transferOut(1, payload);
-
-                log("Triggering smash vulnerability via buffer request...");
-                // Triggering a high request length to trigger memory overflow smash
-                await usbDevice.controlTransferIn({
-                    requestType: 'vendor',
-                    recipient: 'interface',
-                    request: 0x00,
-                    value: 0x00,
-                    index: 0x00
-                }, 0x7000);
-
-                log("Injection finished! Your Switch should now boot.");
-            } catch (err) {
-                log("Error during injection: " + err.message);
-            } finally {
-                // Reset states safely
-                try { await usbDevice.close(); } catch(e){}
-                usbDevice = null;
-                updateUIState();
-            }
-        }
-
-        // Keep track if device disconnects unexpectedly
-        navigator.usb.addEventListener('disconnect', (event) => {
-            if (usbDevice && event.device === usbDevice) {
-                usbDevice = null;
-                log("Device disconnected.");
-                updateUIState();
-            }
-        });
-    </script>
-</body>
-</html>
+                for (let i = 0x3C0

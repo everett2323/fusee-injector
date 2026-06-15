@@ -112,7 +112,6 @@
             font-weight: 600;
         }
 
-        /* Payload Selector Styles */
         .payload-selector {
             display: flex;
             gap: 12px;
@@ -269,7 +268,7 @@
     <div class="container">
         <header>
             <h1>Fusee Web Injector</h1>
-            <p>Connect your Switch in RCM mode to begin</p>
+            <p>Connect your device in RCM mode to begin</p>
         </header>
 
         <div class="status-panel">
@@ -298,7 +297,7 @@
 
         <div id="fileZone" class="file-zone" style="display: none;">
             <div class="file-zone-icon">📋</div>
-            <div id="fileZoneText" class="file-zone-text"><span>Click to browse</span> or drag `.bin` payload here</div>
+            <div id="fileZoneText" class="file-zone-text"><span>Click to browse</span> or drag '.bin' payload here</div>
             <input type="file" id="payloadFile" accept=".bin">
         </div>
 
@@ -332,7 +331,6 @@
             el.logger.scrollTop = el.logger.scrollHeight;
         }
 
-        // Fetch local server payloads (like hekate.bin) directly into ArrayBuffers
         async function fetchBuiltInPayload(filename) {
             if (builtInPayloadCache[filename]) {
                 return builtInPayloadCache[filename];
@@ -343,23 +341,22 @@
                 if (!response.ok) throw new Error(`HTTP status ${response.status}`);
                 const buffer = await response.arrayBuffer();
                 builtInPayloadCache[filename] = buffer;
-                log(`Successfully matched and downloaded structural bytes for ${filename}`);
+                log(`Successfully downloaded structural bytes for ${filename}`);
                 return buffer;
             } catch (err) {
-                log(`Failed to fetch ${filename}: ${err.message}. Ensure the file exists in the correct folder.`);
+                log(`Failed to fetch ${filename}: ${err.message}. Ensure the file exists in the repository folder.`);
                 return null;
             }
         }
 
-        // Toggle visibility between options
         function handlePayloadTypeChange() {
             if (el.radioHekate.checked) {
                 el.fileZone.style.display = 'none';
-                payloadArrayBuffer = null; // Will draw from server on click
+                payloadArrayBuffer = null; 
                 log("Target profile shifted to: Hekate");
             } else {
                 el.fileZone.style.display = 'block';
-                el.fileZoneText.innerHTML = `<span>Click to browse</span> or drag `.bin` payload here`;
+                el.fileZoneText.innerHTML = `<span>Click to browse</span> or drag '.bin' payload here`;
                 payloadArrayBuffer = null;
                 log("Target profile shifted to: Custom Upload");
             }
@@ -369,7 +366,6 @@
         el.radioHekate.addEventListener('change', handlePayloadTypeChange);
         el.radioCustom.addEventListener('change', handlePayloadTypeChange);
 
-        // Handle File Selection (Custom Profiles)
         el.payloadInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (!file) return;
@@ -394,7 +390,7 @@
                 el.actionBtn.disabled = false;
             } else {
                 el.statusDot.className = 'status-dot connected';
-                el.statusLabel.innerText = 'Switch (RCM) Detected';
+                el.statusLabel.innerText = 'RCM Device Detected';
                 
                 if (isHekateMode || payloadArrayBuffer) {
                     el.actionBtn.innerText = isHekateMode ? 'Inject Hekate' : 'Inject Payload';
@@ -406,7 +402,6 @@
             }
         }
 
-        // Action Button Logic (Connect or Inject)
         el.actionBtn.addEventListener('click', async () => {
             if (!usbDevice) {
                 try {
@@ -419,14 +414,13 @@
                     log("Connection failed: " + err.message);
                 }
             } else {
-                // If it's in hekate mode, dynamically grab it from the root directory before running routine
                 if (el.radioHekate.checked) {
                     const dynamicBuffer = await fetchBuiltInPayload('hekate.bin');
                     if (dynamicBuffer) {
                         payloadArrayBuffer = dynamicBuffer;
                         injectPayload();
                     } else {
-                        log("Injection aborted: Missing hekate.bin on host environment root.");
+                        log("Injection aborted: Missing hekate.bin on host repository root.");
                     }
                 } else if (payloadArrayBuffer) {
                     injectPayload();
@@ -434,7 +428,6 @@
             }
         });
 
-        // The actual RCM / ShofEL2 Injection Routine
         async function injectPayload() {
             if (!usbDevice || !payloadArrayBuffer) return;
 
@@ -449,15 +442,43 @@
                 await usbDevice.selectConfiguration(1);
                 await usbDevice.claimInterface(0);
 
-                log("Reading device hardware info...");
+                log("Reading hardware info device verification bytes...");
                 let result = await usbDevice.transferIn(1, 16);
                 log("Connected to hardware revision: " + new Uint8Array(result.data.buffer).subarray(0,4).join('.'));
 
-                // Construct interleave payload geometry 
-                let payload = new Uint8Array(0x30000); 
+                // Construct full RCM data stream map geometry (0x30000 bytes allocation)
+                let fullPayload = new Uint8Array(0x30000); 
                 let sourceView = new Uint8Array(payloadArrayBuffer);
-                
-                payload.set(sourceView, 0);
+                fullPayload.set(sourceView, 0);
 
-                log("Interleaving geometry mapping...");
-                for (let i = 0x3C0
+                // Sending interleaved configuration chunks
+                log("Sending stream packets...");
+                const chunkSize = 0x1000;
+                for (let offset = 0; offset < fullPayload.length; offset += chunkSize) {
+                    let chunk = fullPayload.subarray(offset, offset + chunkSize);
+                    await usbDevice.transferOut(1, chunk);
+                }
+
+                // Standard interface structure trigger endpoint logic via Control Transfers
+                log("Sending exploit trigger payload via control transfer...");
+                await usbDevice.controlTransferOut({
+                    requestType: 'standard',
+                    recipient: 'interface',
+                    request: 0x00, 
+                    value: 0x0000,
+                    index: 0x0000
+                }, new Uint8Array(0));
+
+                log("Injection cycle completed successfully.");
+            } catch (err) {
+                log("Injection failed: " + err.message);
+            } finally {
+                // Safely reset device variables to prevent locking the browser state
+                try { await usbDevice.close(); } catch(e){}
+                usbDevice = null;
+                updateUIState();
+            }
+        }
+    </script>
+</body>
+</html>
